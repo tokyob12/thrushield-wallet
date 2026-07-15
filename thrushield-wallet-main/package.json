@@ -1,0 +1,40 @@
+{
+  "name": "thrushield",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Highly secure, developer-focused Chrome wallet extension for the Thru blockchain",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "thru",
+    "blockchain",
+    "wallet",
+    "chrome-extension"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@thru/crypto": "^0.2.21",
+    "@thru/thru-sdk": "^0.2.21",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.7.1",
+    "@tailwindcss/postcss": "^4.3.2",
+    "@types/chrome": "^0.2.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "autoprefixer": "^10.5.2",
+    "postcss": "^8.5.19",
+    "sharp": "^0.35.3",
+    "tailwindcss": "^4.3.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.4"
+  }
+}
