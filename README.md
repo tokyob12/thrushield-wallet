@@ -20,7 +20,7 @@ are involved**. Use at your own risk; the API and storage format may change.
 
 Download the ready to use build instead of building from source:
 
-- Go to **Releases** and download the latest `dist` package, **or**
+- Go to **[Releases](https://github.com/tokyob12/thrushield-wallet/releases/tag/v0.1.0-beta)** and download the latest `dist` package, **or**
 - Download `dist.zip` directly from the repository root.
 
 Then open `chrome://extensions`, enable **Developer mode**, and click
