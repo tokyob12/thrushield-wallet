@@ -3,6 +3,9 @@
 A secure, **open-source**, developer focused Chrome wallet extension for the
 [Thru](https://thru.org) blockchain.
 
+<img width="471" height="706" alt="Screenshot 2026-07-15 163908" src="https://github.com/user-attachments/assets/f897f8b5-21e4-447f-9d3d-8b7bb8e19473" />
+
+
 ThruShield is **non-custodial** and **100% open source** , your keys are generated
 and stored only on your device, and the entire codebase is public so anyone can
 audit how funds are handled.
