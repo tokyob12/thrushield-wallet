@@ -341,8 +341,8 @@ export default function App() {
       <header className={`mb-6 flex gap-3 ${isUnlockView ? "flex-col items-center text-center" : "items-start justify-between"}`}>
         <div>
           {!isUnlockView && <p className="text-xs uppercase tracking-[0.28em] text-rose-200/75">ThruShield</p>}
-          <h1 className={`${isUnlockView ? "text-3xl" : "text-xl"} font-semibold text-white`}>
-            {view === "settings" ? "Settings" : "ThruShield"}
+          <h1 className={`${isUnlockView ? "text-4xl font-bold tracking-[0.08em]" : "text-xl font-semibold"} text-white`}>
+            {view === "settings" ? "Settings" : isUnlockView ? "ThruShield Wallet" : "ThruShield"}
           </h1>
           {view === "dashboard" && shortAddress && (
             <button
@@ -486,15 +486,15 @@ export default function App() {
       )}
 
       {view === "unlock" && (
-        <div className="flex min-h-[360px] items-center justify-center">
-          <form onSubmit={handleUnlock} className="w-full max-w-[300px] space-y-4 text-center">
+        <div className="flex min-h-[380px] items-center justify-center">
+          <form onSubmit={handleUnlock} className="w-full max-w-[320px] space-y-4 text-center">
           <label className="block text-sm">
             <span className="mb-2 block text-base text-rose-50/84">Enter your password</span>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-white outline-none backdrop-blur-md placeholder:text-rose-100/40"
+              className="w-full rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-center text-white outline-none backdrop-blur-md placeholder:text-rose-100/40"
               required
             />
           </label>
