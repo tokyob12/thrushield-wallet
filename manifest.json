@@ -1,0 +1,50 @@
+{
+  "manifest_version": 3,
+  "name": "ThruShield",
+  "version": "0.1.0",
+  "description": "A highly secure, developer-focused Chrome wallet extension for the Thru blockchain.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "src/popup/index.html",
+    "default_title": "ThruShield",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "src/background/service-worker.ts",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/content-script.ts"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/inpage/provider.ts"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "permissions": ["storage", "activeTab", "alarms"],
+  "host_permissions": [
+    "https://rpc.alphanet.thru.org/*",
+    "https://*.thru.org/*",
+    "https://*.thruput.org/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; base-uri 'self'; form-action 'self';"
+  },
+  "minimum_chrome_version": "116"
+}
