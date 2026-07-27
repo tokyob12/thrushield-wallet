@@ -1,10 +1,14 @@
 import {
   buildConnectApproval,
   buildSignApproval,
+  clearApprovalWindow,
+  clearDappJob,
+  deliverDappResponse,
+  getApprovalIdForWindow,
+  getDappJob,
   getPendingApproval,
   openConfirmationWindow,
-  resolveApproval,
-  waitForApproval,
+  saveDappJob,
 } from "./approvalManager";
 import { registerAutoLockHandler } from "./autoLock";
 import {
@@ -14,6 +18,7 @@ import {
   getTransactionHistory,
   transferNative,
 } from "./chainActions";
+import { buildSigningPayloadFromIntent, isTransactionIntent } from "./intentBuilder";
 import {
   addAccount,
   createWallet,
@@ -42,10 +47,12 @@ import type {
   DappResponseMessage,
   InternalMessage,
   InternalResponse,
+  SignTransactionInput,
   WalletState,
 } from "../types/messages";
 
 const CONTENT_SCRIPT_SOURCE = "thruShield-content";
+const completingApprovals = new Set<string>();
 
 function walletError(
   code: NonNullable<DappResponseMessage["error"]>["code"],
@@ -69,18 +76,59 @@ function getWalletState(): WalletState {
   };
 }
 
-async function requestUserApproval(
-  approvalBuilder: () => { id: string; approval: Parameters<typeof waitForApproval>[1] },
-): Promise<boolean> {
-  const { id, approval } = approvalBuilder();
-  const approvalPromise = waitForApproval(id, approval);
-  await openConfirmationWindow(id);
-  return approvalPromise;
+async function finalizeConnect(origin: string, faviconUrl?: string): Promise<unknown> {
+  const publicKey = getUnlockedPublicKey();
+  if (!publicKey) {
+    throw walletError("WALLET_LOCKED", "Wallet locked during connect");
+  }
+
+  await saveAuthorizedDApp({
+    origin,
+    publicKey,
+    connectedAt: Date.now(),
+    faviconUrl,
+  });
+
+  return [{ publicKey }];
 }
 
-async function handleConnect(
+async function resolveSignPayload(payload: SignTransactionInput): Promise<string> {
+  if (typeof payload === "string") {
+    if (!payload) {
+      throw walletError("INVALID_PAYLOAD", "Transaction payload must be a base64 string");
+    }
+    return payload;
+  }
+
+  if (!isTransactionIntent(payload)) {
+    throw walletError(
+      "INVALID_PAYLOAD",
+      "signTransaction expects base64 wire bytes or a transaction intent",
+    );
+  }
+
+  const feePayer = getUnlockedPublicKey();
+  if (!feePayer) {
+    throw walletError("WALLET_LOCKED", "Wallet is locked");
+  }
+
+  try {
+    return await buildSigningPayloadFromIntent(payload, feePayer);
+  } catch (error) {
+    throw walletError(
+      "INVALID_PAYLOAD",
+      error instanceof Error ? error.message : "Failed to build transaction intent",
+    );
+  }
+}
+
+/**
+ * Start connect approval. Response is delivered later via completeApprovalJob.
+ */
+async function startConnect(
   message: Extract<DappRequestMessage, { type: "connect" }>,
-): Promise<unknown> {
+  tabId: number,
+): Promise<void> {
   if (!isValidOrigin(message.origin)) {
     throw walletError("UNAUTHORIZED_ORIGIN", "Invalid dApp origin");
   }
@@ -89,27 +137,44 @@ async function handleConnect(
     throw walletError("WALLET_LOCKED", "Unlock ThruShield before connecting");
   }
 
-  const approved = await requestUserApproval(() =>
-    buildConnectApproval(message.origin, message.faviconUrl),
+  const { id, approval } = buildConnectApproval(message.origin, message.faviconUrl);
+  await saveDappJob({
+    approval,
+    requestId: message.requestId,
+    tabId,
+    message,
+  });
+  await openConfirmationWindow(id);
+}
+
+/**
+ * Start sign approval. Response is delivered later via completeApprovalJob.
+ */
+async function startSignTransaction(
+  message: Extract<DappRequestMessage, { type: "signTransaction" }>,
+  tabId: number,
+): Promise<void> {
+  await assertAuthorizedOrigin(message.origin);
+
+  if (!isWalletUnlocked()) {
+    throw walletError("WALLET_LOCKED", "Wallet is locked");
+  }
+
+  const signingPayloadBase64 = await resolveSignPayload(message.payload);
+  const { id, approval } = buildSignApproval(
+    message.origin,
+    signingPayloadBase64,
+    message.faviconUrl,
   );
 
-  if (!approved) {
-    throw walletError("USER_REJECTED", "Connection rejected by user");
-  }
-
-  const publicKey = getUnlockedPublicKey();
-  if (!publicKey) {
-    throw walletError("WALLET_LOCKED", "Wallet locked during connect");
-  }
-
-  await saveAuthorizedDApp({
-    origin: message.origin,
-    publicKey,
-    connectedAt: Date.now(),
-    faviconUrl: message.faviconUrl,
+  await saveDappJob({
+    approval,
+    requestId: message.requestId,
+    tabId,
+    message,
+    signingPayloadBase64,
   });
-
-  return [{ publicKey }];
+  await openConfirmationWindow(id);
 }
 
 async function handleDisconnect(
@@ -131,53 +196,36 @@ async function handleGetSigningContext(
   return getSigningContextForWallet();
 }
 
-async function handleSignTransaction(
-  message: Extract<DappRequestMessage, { type: "signTransaction" }>,
-): Promise<string> {
-  await assertAuthorizedOrigin(message.origin);
-
-  if (!message.payload || typeof message.payload !== "string") {
-    throw walletError("INVALID_PAYLOAD", "Transaction payload must be a base64 string");
-  }
-
-  if (!isWalletUnlocked()) {
-    throw walletError("WALLET_LOCKED", "Wallet is locked");
-  }
-
-  const approved = await requestUserApproval(() =>
-    buildSignApproval(message.origin, message.payload, message.faviconUrl),
-  );
-
-  if (!approved) {
-    throw walletError("USER_REJECTED", "Transaction signing rejected by user");
-  }
-
-  return signTransactionPayload(message.payload);
-}
-
-async function handleDappRequest(message: DappRequestMessage): Promise<DappResponseMessage> {
+/**
+ * Returns a response for immediate methods, or null when approval UI will answer later.
+ */
+async function handleDappRequest(
+  message: DappRequestMessage,
+  tabId: number,
+): Promise<DappResponseMessage | null> {
   try {
-    let result: unknown;
-
     switch (message.type) {
       case "connect":
-        result = await handleConnect(message);
-        break;
+        await startConnect(message, tabId);
+        return null;
+
+      case "signTransaction":
+        await startSignTransaction(message, tabId);
+        return null;
+
       case "disconnect":
         await handleDisconnect(message);
-        result = undefined;
-        break;
+        return { requestId: message.requestId, result: undefined };
+
       case "getSigningContext":
-        result = await handleGetSigningContext(message);
-        break;
-      case "signTransaction":
-        result = await handleSignTransaction(message);
-        break;
+        return {
+          requestId: message.requestId,
+          result: await handleGetSigningContext(message),
+        };
+
       default:
         throw walletError("INTERNAL_ERROR", "Unknown request type");
     }
-
-    return { requestId: message.requestId, result };
   } catch (error) {
     const err = error as {
       code?: NonNullable<DappResponseMessage["error"]>["code"];
@@ -190,6 +238,91 @@ async function handleDappRequest(message: DappRequestMessage): Promise<DappRespo
         message: err.message ?? "Unexpected error",
       },
     };
+  }
+}
+
+async function completeApprovalJob(
+  approvalId: string,
+  approved: boolean,
+): Promise<InternalResponse<null>> {
+  if (completingApprovals.has(approvalId)) {
+    return { ok: true, data: null };
+  }
+  completingApprovals.add(approvalId);
+
+  try {
+    const job = await getDappJob(approvalId);
+    if (!job) {
+      return { ok: false, error: "Approval request not found or expired" };
+    }
+
+    // Clear first so window-close + button-approve cannot double-deliver.
+    await clearDappJob(approvalId);
+
+    let response: DappResponseMessage;
+
+    try {
+      if (!approved) {
+        response = {
+          requestId: job.requestId,
+          error: walletError("USER_REJECTED", "Request rejected by user"),
+        };
+      } else if (job.message.type === "connect") {
+        if (!isWalletUnlocked()) {
+          response = {
+            requestId: job.requestId,
+            error: walletError("WALLET_LOCKED", "Unlock ThruShield before connecting"),
+          };
+        } else {
+          response = {
+            requestId: job.requestId,
+            result: await finalizeConnect(job.message.origin, job.message.faviconUrl),
+          };
+        }
+      } else if (job.message.type === "signTransaction") {
+        if (!isWalletUnlocked()) {
+          response = {
+            requestId: job.requestId,
+            error: walletError("WALLET_LOCKED", "Wallet is locked"),
+          };
+        } else {
+          const payload = job.signingPayloadBase64;
+          if (!payload) {
+            response = {
+              requestId: job.requestId,
+              error: walletError("INVALID_PAYLOAD", "Missing signing payload"),
+            };
+          } else {
+            response = {
+              requestId: job.requestId,
+              result: await signTransactionPayload(payload),
+            };
+          }
+        }
+      } else {
+        response = {
+          requestId: job.requestId,
+          error: walletError("INTERNAL_ERROR", "Unsupported approval job"),
+        };
+      }
+    } catch (error) {
+      const err = error as {
+        code?: NonNullable<DappResponseMessage["error"]>["code"];
+        message?: string;
+      };
+      response = {
+        requestId: job.requestId,
+        error: {
+          code: err.code ?? "INTERNAL_ERROR",
+          message: err.message ?? "Unexpected error",
+        },
+      };
+    }
+
+    await deliverDappResponse(job.tabId, response);
+    return { ok: true, data: null };
+  } finally {
+    completingApprovals.delete(approvalId);
   }
 }
 
@@ -245,20 +378,15 @@ async function handleInternalMessage(
         return { ok: true, data: null };
 
       case "GET_PENDING_APPROVAL": {
-        const approval = getPendingApproval(message.approvalId);
+        const approval = await getPendingApproval(message.approvalId);
         if (!approval) {
           return { ok: false, error: "Approval request not found or expired" };
         }
         return { ok: true, data: approval };
       }
 
-      case "RESOLVE_APPROVAL": {
-        const resolved = resolveApproval(message.approvalId, message.approved);
-        if (!resolved) {
-          return { ok: false, error: "Approval request not found or expired" };
-        }
-        return { ok: true, data: null };
-      }
+      case "RESOLVE_APPROVAL":
+        return completeApprovalJob(message.approvalId, message.approved);
 
       case "GET_BALANCE":
         return { ok: true, data: await getAccountBalance() };
@@ -312,7 +440,7 @@ async function handleInternalMessage(
 }
 
 function isContentScriptSender(sender: chrome.runtime.MessageSender): boolean {
-  return sender.id === chrome.runtime.id && sender.tab !== undefined;
+  return sender.id === chrome.runtime.id && sender.tab?.id !== undefined;
 }
 
 registerAutoLockHandler(() => {
@@ -323,7 +451,7 @@ initializeVaultCache().catch(console.error);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.source === CONTENT_SCRIPT_SOURCE && message?.kind === "dapp") {
-    if (!isContentScriptSender(sender)) {
+    if (!isContentScriptSender(sender) || sender.tab?.id == null) {
       sendResponse({
         requestId: message.payload?.requestId,
         error: walletError("UNAUTHORIZED_ORIGIN", "Invalid message sender"),
@@ -331,19 +459,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
 
-    handleDappRequest(message.payload as DappRequestMessage)
-      .then(sendResponse)
-      .catch((error) => {
-        sendResponse({
-          requestId: (message.payload as DappRequestMessage).requestId,
-          error: walletError(
-            "INTERNAL_ERROR",
-            error instanceof Error ? error.message : "Unexpected error",
-          ),
-        });
-      });
+    const tabId = sender.tab.id;
+    sendResponse({ accepted: true });
 
-    return true;
+    void handleDappRequest(message.payload as DappRequestMessage, tabId).then((response) => {
+      if (response) {
+        return deliverDappResponse(tabId, response);
+      }
+      return undefined;
+    });
+
+    return false;
   }
 
   if (message?.source === "thruShield-internal") {
@@ -359,6 +485,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   return false;
+});
+
+chrome.windows.onRemoved.addListener((windowId) => {
+  void (async () => {
+    const approvalId = await getApprovalIdForWindow(windowId);
+    if (!approvalId) {
+      return;
+    }
+
+    await clearApprovalWindow(windowId);
+
+    // If the job is already cleared (user clicked Approve/Reject), this is a no-op.
+    const job = await getDappJob(approvalId);
+    if (!job) {
+      return;
+    }
+
+    await completeApprovalJob(approvalId, false);
+  })();
 });
 
 export {};

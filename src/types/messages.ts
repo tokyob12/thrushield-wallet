@@ -7,9 +7,29 @@ export type ThruSigningContext = {
   selectedAccountPublicKey: string | null;
   feePayerPublicKey: string;
   signerPublicKey: string;
-  acceptedInputEncodings: ["signing_payload_base64", "raw_transaction_base64"];
+  acceptedInputEncodings: [
+    "signing_payload_base64",
+    "raw_transaction_base64",
+    "transaction_intent",
+  ];
   outputEncoding: "raw_transaction_base64";
 };
+
+/** Official Thru wallet transaction intent (wallet builds the final wire tx). */
+export type ThruTransactionIntent = {
+  programAddress: string;
+  instructionData: string;
+  readWriteAddresses?: string[];
+  readOnlyAddresses?: string[];
+  walletAddress?: string;
+  review?: {
+    appName?: string;
+    programAddress?: string;
+    instruction?: string;
+  };
+};
+
+export type SignTransactionInput = string | ThruTransactionIntent;
 
 export type WalletErrorCode =
   | "UNAUTHORIZED_ORIGIN"
@@ -33,7 +53,7 @@ export type DappRequestMessage =
       type: "signTransaction";
       requestId: string;
       origin: string;
-      payload: string;
+      payload: SignTransactionInput;
       faviconUrl?: string;
     };
 

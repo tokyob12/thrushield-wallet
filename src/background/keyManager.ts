@@ -450,9 +450,28 @@ export async function exportPrivateKey(password: string): Promise<{
   };
 }
 
-export function decodeTransactionPreview(base64Payload: string): DecodedTransactionPreview {
+function parseTransactionPayload(base64Payload: string): Transaction {
   const bytes = base64ToBytes(base64Payload);
-  const tx = Transaction.fromWire(bytes);
+
+  try {
+    return Transaction.fromWire(bytes);
+  } catch (firstError) {
+    // Official external-signer path uses toWireForSigning() (no signature bytes).
+    // fromWire expects a full wire tx including a 64-byte signature slot.
+    const padded = new Uint8Array(bytes.length + 64);
+    padded.set(bytes, 0);
+    try {
+      return Transaction.fromWire(padded);
+    } catch {
+      throw firstError instanceof Error
+        ? firstError
+        : new Error("Invalid transaction payload");
+    }
+  }
+}
+
+export function decodeTransactionPreview(base64Payload: string): DecodedTransactionPreview {
+  const tx = parseTransactionPayload(base64Payload);
 
   return {
     feePayer: Pubkey.from(tx.feePayer).toThruFmt(),
@@ -475,8 +494,7 @@ export async function signTransactionPayload(base64Payload: string): Promise<str
 
   await resetAutoLockTimer();
 
-  const bytes = base64ToBytes(base64Payload);
-  const tx = Transaction.fromWire(bytes);
+  const tx = parseTransactionPayload(base64Payload);
   await tx.sign(unlockedKeys.privateKey);
   return bytesToBase64(tx.toWire());
 }
@@ -491,7 +509,12 @@ export function getSigningContextForWallet() {
     selectedAccountPublicKey: unlockedKeys.address,
     feePayerPublicKey: unlockedKeys.address,
     signerPublicKey: unlockedKeys.address,
-    acceptedInputEncodings: ["signing_payload_base64", "raw_transaction_base64"] as const,
+    acceptedInputEncodings: [
+      "signing_payload_base64",
+      "raw_transaction_base64",
+      "transaction_intent",
+    ] as const,
+
     outputEncoding: "raw_transaction_base64" as const,
   };
 }

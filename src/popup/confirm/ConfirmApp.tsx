@@ -25,15 +25,38 @@ export default function ConfirmApp() {
       return;
     }
 
-    sendInternal<PendingApproval>({ type: "GET_PENDING_APPROVAL", approvalId })
-      .then((response) => {
-        if (!response.ok) {
-          setError(response.error);
-          return;
-        }
-        setApproval(response.data);
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load approval"));
+    let cancelled = false;
+    let attempts = 0;
+
+    const load = () => {
+      attempts += 1;
+      sendInternal<PendingApproval>({ type: "GET_PENDING_APPROVAL", approvalId })
+        .then((response) => {
+          if (cancelled) return;
+          if (!response.ok) {
+            if (attempts < 8) {
+              window.setTimeout(load, 150);
+              return;
+            }
+            setError(response.error);
+            return;
+          }
+          setApproval(response.data);
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          if (attempts < 8) {
+            window.setTimeout(load, 150);
+            return;
+          }
+          setError(err instanceof Error ? err.message : "Failed to load approval");
+        });
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function resolve(approved: boolean) {

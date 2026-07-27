@@ -1,11 +1,12 @@
 {
   "name": "thrushield",
-  "version": "0.1.0.2",
+  "version": "0.1.0.5",
   "private": true,
   "description": "Highly secure, developer-focused Chrome wallet extension for the Thru blockchain",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "build:inpage": "vite build --config vite.inpage.config.ts && mkdir -p public && cp build-temp/inpage.js public/inpage.js",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },
